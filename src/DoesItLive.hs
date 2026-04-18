@@ -19,7 +19,7 @@ import Network.HTTP.Client (Manager)
 import Network.HTTP.Client.TLS (newTlsManager)
 import System.IO (hPutStrLn, hFlush, stderr)
 import System.Directory (createDirectoryIfMissing, getTemporaryDirectory)
-import System.Process (readProcessWithExitCode)
+import System.Process.Typed (proc, readProcess_)
 
 import DoesItLive.Build (BuildResult(..), attemptBuild)
 import DoesItLive.Hackage
@@ -113,7 +113,7 @@ runScorer opts = do
       logMsg ("  LTS has " <> show (Map.size versionMap) <> " packages")
 
       logMsg "Running cabal update..."
-      _ <- readProcessWithExitCode "cabal" ["update"] ""
+      _ <- readProcess_ $ proc "cabal" ["update"]
 
       tmpDir <- getTemporaryDirectory
       let buildDir = tmpDir <> "/does-it-live-builds"

@@ -4,10 +4,13 @@ module DoesItLive.Build
   ) where
 
 import Control.Exception (bracket_)
+import Data.ByteString.Lazy qualified as LBS
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Text
 import System.Exit (ExitCode(..))
-import System.Process (readProcessWithExitCode)
+import System.Process.Typed
+  ( proc, setWorkingDir, readProcess )
 import System.Timeout (timeout)
 import System.Directory (removeDirectoryRecursive, doesDirectoryExist)
 
@@ -36,10 +39,10 @@ attemptBuild workDir projectContent packageName version timeoutSeconds = do
       packageDir = workDir <> "/" <> nameVersion
 
   -- cabal get to unpack the source
-  (getExit, _, getStderr) <- readProcessWithExitCode
-    "cabal" ["get", nameVersion, "--destdir=" <> workDir] ""
+  (getExit, _, getStderr) <- readProcess $
+    proc "cabal" ["get", nameVersion, "--destdir=" <> workDir]
   case getExit of
-    ExitFailure _ -> pure (BuildFailure (Text.pack getStderr))
+    ExitFailure _ -> pure (BuildFailure (decodeOutput getStderr))
     ExitSuccess -> do
       -- Write cabal.project in the package directory
       writeFile (packageDir <> "/cabal.project") (Text.unpack projectContent)
@@ -50,11 +53,15 @@ attemptBuild workDir projectContent packageName version timeoutSeconds = do
               then removeDirectoryRecursive packageDir
               else pure ()
       bracket_ (pure ()) cleanupDir $ do
+        let buildProc = setWorkingDir packageDir $ proc "cabal" ["build"]
         result <- timeout (timeoutSeconds * 1_000_000) $
-          readProcessWithExitCode
-            "cabal" ["build", "--project-dir=" <> packageDir] ""
+          readProcess buildProc
         case result of
           Nothing -> pure BuildTimeout
           Just (ExitSuccess, _, _) -> pure BuildSuccess
           Just (ExitFailure _, _, buildStderr) ->
-            pure (BuildFailure (Text.pack buildStderr))
+            pure (BuildFailure (decodeOutput buildStderr))
+
+-- | Decode process output from lazy ByteString to Text
+decodeOutput :: LBS.ByteString -> Text
+decodeOutput = Text.decodeUtf8 . LBS.toStrict
