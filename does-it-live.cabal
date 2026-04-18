@@ -80,7 +80,7 @@ library
     , containers
     , time
     , async
-    , process
+    , typed-process
     , directory
 
 executable exe

@@ -15,6 +15,7 @@ data CliOptions = CliOptions
   { cliOutput       :: FilePath
   , cliConcurrency  :: Int
   , cliMinScore     :: Int
+  , cliMaxScore     :: Int
   , cliCheckBuilds  :: Bool
   , cliBuildTimeout :: Int
   }
@@ -45,6 +46,13 @@ cliOptionsParser = CliOptions
      <> showDefault
      <> help "Only output packages scoring at or above this threshold"
       )
+  <*> option auto
+      ( long "max-score"
+     <> metavar "N"
+     <> value 100
+     <> showDefault
+     <> help "Only output packages scoring at or below this threshold"
+      )
   <*> switch
       ( long "check-builds"
      <> help "Attempt to build each package using Stackage LTS constraints"
@@ -69,6 +77,7 @@ main = do
         { optOutput       = cliOutput cli
         , optConcurrency  = cliConcurrency cli
         , optMinScore     = cliMinScore cli
+        , optMaxScore     = cliMaxScore cli
         , optCheckBuilds  = cliCheckBuilds cli
         , optBuildTimeout = cliBuildTimeout cli
         }

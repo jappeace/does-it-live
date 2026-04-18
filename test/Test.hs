@@ -15,7 +15,7 @@ import DoesItLive.Score
 import DoesItLive.Stackage (parseStackageConfig, parseStackageVersions, formatProjectConstraints)
 import DoesItLive.Hackage (parseUploadTimeHtml, parseReverseDepsHtml)
 import Data.Map.Strict qualified as Map
-import DoesItLive.Types (PackageInfo(..), ScoreResult(..), BuildStatus(..))
+import DoesItLive.Types (PackageInfo(..), ScoreResult(..), noBuildChecked)
 
 main :: IO ()
 main = defaultMain tests
@@ -121,7 +121,7 @@ fullScoreTests = testGroup "Full package scoring"
       in do
         totalScore result @?= 100
         scorePackageName result @?= "aeson"
-        buildStatus result @?= BuildNotChecked
+        buildStatus result @?= noBuildChecked
   , testCase "abandoned package scores low" $
       let info = PackageInfo
             { packageName     = "old-forgotten-pkg"
@@ -134,7 +134,7 @@ fullScoreTests = testGroup "Full package scoring"
           result = scorePackage refTime info
       in do
         totalScore result @?= 2
-        buildStatus result @?= BuildNotChecked
+        buildStatus result @?= noBuildChecked
   ]
 
 stackageParserTests :: TestTree

@@ -19,7 +19,7 @@ import Network.HTTP.Client (Manager)
 import Network.HTTP.Client.TLS (newTlsManager)
 import System.IO (hPutStrLn, hFlush, stderr)
 import System.Directory (createDirectoryIfMissing, getTemporaryDirectory)
-import System.Process (readProcessWithExitCode)
+import System.Process.Typed (proc, readProcess_)
 
 import DoesItLive.Build (BuildResult(..), attemptBuild)
 import DoesItLive.Hackage
@@ -29,12 +29,13 @@ import DoesItLive.Score (scorePackage)
 import DoesItLive.Stackage
   ( fetchStackagePackages, fetchStackageLtsConfig
   , parseStackageVersions, formatProjectConstraints )
-import DoesItLive.Types (PackageInfo(..), ScoreResult(..), BuildStatus(..))
+import DoesItLive.Types (PackageInfo(..), ScoreResult(..), BuildStatus(..), BuildOutcome(..))
 
 data Options = Options
   { optOutput       :: FilePath
   , optConcurrency  :: Int
   , optMinScore     :: Int
+  , optMaxScore     :: Int
   , optCheckBuilds  :: Bool
   , optBuildTimeout :: Int
   } deriving stock (Show)
@@ -95,7 +96,8 @@ runScorer opts = do
   -- Phase 3: Score all packages
   logMsg "Scoring packages..."
   let results = map (scorePackage now) packageInfos
-      filtered = filter (\r -> totalScore r >= optMinScore opts) results
+      filtered = filter (\r -> totalScore r >= optMinScore opts
+                              && totalScore r <= optMaxScore opts) results
       sorted = sortBy (comparing (Down . totalScore)) filtered
 
   logMsg ("Done! " <> show (length sorted) <> " packages scored above threshold "
@@ -104,16 +106,17 @@ runScorer opts = do
   -- Phase 4: Optional build checking
   if optCheckBuilds opts
     then do
-      logMsg "Phase 4: Checking builds against Stackage LTS..."
+      logMsg "Phase 4: Checking builds..."
       logMsg "Fetching Stackage LTS constraints..."
       ltsConfig <- fetchStackageLtsConfig manager
       let versionMap = parseStackageVersions ltsConfig
-          projectContent = formatProjectConstraints ltsConfig
+          ltsProjectContent = formatProjectConstraints ltsConfig
+          bareProjectContent = "packages: .\n" :: Text
 
       logMsg ("  LTS has " <> show (Map.size versionMap) <> " packages")
 
       logMsg "Running cabal update..."
-      _ <- readProcessWithExitCode "cabal" ["update"] ""
+      _ <- readProcess_ $ proc "cabal" ["update"]
 
       tmpDir <- getTemporaryDirectory
       let buildDir = tmpDir <> "/does-it-live-builds"
@@ -122,22 +125,29 @@ runScorer opts = do
       let totalToBuild = length sorted
       buildResults <- mapM (\(idx, result) -> do
         let name = scorePackageName result
-        case Map.lookup name versionMap of
-          Nothing -> do
-            logMsg ("  [" <> show idx <> "/" <> show totalToBuild
-                   <> "] " <> Text.unpack name <> ": skipped (not in LTS)")
-            pure result { buildStatus = BuildNotChecked }
-          Just version -> do
-            logMsg ("  [" <> show idx <> "/" <> show totalToBuild
-                   <> "] " <> Text.unpack name <> "-" <> Text.unpack version <> ": building...")
-            buildResult <- attemptBuild buildDir projectContent name version (optBuildTimeout opts)
-            let status = case buildResult of
-                  BuildSuccess   -> BuildChecked True
-                  BuildFailure _ -> BuildChecked False
-                  BuildTimeout   -> BuildChecked False
-                  BuildSkipped   -> BuildNotChecked
-            logMsg ("      -> " <> showBuildResult buildResult)
-            pure result { buildStatus = status }
+            (version, projectContent) = case Map.lookup name versionMap of
+              Just ver -> (Just ver, ltsProjectContent)
+              Nothing  -> (Nothing, bareProjectContent)
+            label = Text.unpack name <> case version of
+              Just ver -> "-" <> Text.unpack ver
+              Nothing  -> " (latest)"
+        logMsg ("  [" <> show idx <> "/" <> show totalToBuild
+               <> "] " <> label <> ": building...")
+        buildResult <- attemptBuild buildDir projectContent name version (optBuildTimeout opts)
+        let status = case buildResult of
+              BuildAttempted outcome -> BuildChecked outcome
+              BuildTimeout -> BuildChecked BuildOutcome
+                { constraintsSolved = False
+                , buildSucceeded    = False
+                , usedJailbreak     = False
+                }
+              BuildGetFailed _ -> BuildChecked BuildOutcome
+                { constraintsSolved = False
+                , buildSucceeded    = False
+                , usedJailbreak     = False
+                }
+        logMsg ("      -> " <> showBuildResult buildResult)
+        pure result { buildStatus = status }
         ) (zip [(1 :: Int)..] sorted)
       pure buildResults
     else pure sorted
@@ -192,7 +202,11 @@ logMsg msg = do
   hFlush stderr
 
 showBuildResult :: BuildResult -> String
-showBuildResult BuildSuccess     = "OK"
-showBuildResult (BuildFailure _) = "FAILED"
-showBuildResult BuildTimeout     = "TIMEOUT"
-showBuildResult BuildSkipped     = "SKIPPED"
+showBuildResult (BuildAttempted outcome)
+  | buildSucceeded outcome && usedJailbreak outcome = "OK (jailbroken)"
+  | buildSucceeded outcome                          = "OK"
+  | usedJailbreak outcome                           = "FAILED (jailbroken)"
+  | constraintsSolved outcome                       = "FAILED"
+  | otherwise                                       = "CAN'T SOLVE"
+showBuildResult BuildTimeout       = "TIMEOUT"
+showBuildResult (BuildGetFailed _) = "GET FAILED"
