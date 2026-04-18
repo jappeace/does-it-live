@@ -13,7 +13,8 @@ import DoesItLive.Score
   ( scoreRecency, scoreStackage, scoreDeprecated
   , scoreReverseDeps, scoreVersionCount, scorePackage )
 import DoesItLive.Stackage (parseStackageConfig)
-import DoesItLive.Hackage (parseUploadTimeHtml)
+import DoesItLive.Hackage (parseUploadTimeHtml, parseReverseDepsHtml)
+import Data.Map.Strict qualified as Map
 import DoesItLive.Types (PackageInfo(..), ScoreResult(..))
 
 main :: IO ()
@@ -28,6 +29,7 @@ tests = testGroup "does-it-live"
   , versionCountTests
   , fullScoreTests
   , stackageParserTests
+  , reverseDepsParserTests
   , uploadTimeParserTests
   ]
 
@@ -156,6 +158,29 @@ stackageParserTests = testGroup "Stackage cabal.config parser"
       in do
         Set.member "foo" result @?= True
         Set.size result @?= 1
+  ]
+
+reverseDepsParserTests :: TestTree
+reverseDepsParserTests = testGroup "Reverse deps HTML parser"
+  [ testCase "parses reverse deps table" $
+      let html = Text.concat
+            [ "<table><tr class=\"fancy\"><th>Package name</th><th>Total</th><th>Direct</th></tr>"
+            , "<tr class=\"odd\"><td><a href=\"/package/aeson\">aeson</a></td>"
+            , "<td>3500 (<a href=\"/package/aeson/reverse/verbose\">view</a>)</td>"
+            , "<td>1200 (<a href=\"/package/aeson/reverse\">view</a>)</td></tr>"
+            , "<tr class=\"even\"><td><a href=\"/package/text\">text</a></td>"
+            , "<td>8000 (<a href=\"/package/text/reverse/verbose\">view</a>)</td>"
+            , "<td>4500 (<a href=\"/package/text/reverse\">view</a>)</td></tr>"
+            , "</table>"
+            ]
+          result = parseReverseDepsHtml html
+      in do
+        Map.lookup "aeson" result @?= Just 1200
+        Map.lookup "text" result @?= Just 4500
+        Map.size result @?= 2
+  , testCase "returns empty for no table rows" $
+      let result = parseReverseDepsHtml "<html><body>no table</body></html>"
+      in Map.size result @?= 0
   ]
 
 uploadTimeParserTests :: TestTree

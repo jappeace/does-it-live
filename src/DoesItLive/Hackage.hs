@@ -84,42 +84,34 @@ fetchReverseDeps manager = do
   pure (parseReverseDepsHtml bodyText)
 
 -- | Parse the reverse deps HTML table.
--- Each row has: <td><a href="/package/PKG">PKG</a></td><td>TOTAL (...)</td><td>DIRECT (...)</td>
+-- Each row looks like:
+-- <tr class="odd"><td><a href="/package/PKG">PKG</a></td><td>TOTAL (...)</td><td>DIRECT (...)</td></tr>
+-- We extract PKG name and DIRECT count (the number in the third <td>).
 parseReverseDepsHtml :: Text -> Map Text Int
 parseReverseDepsHtml html =
-  let -- Find all table rows with package reverse dep data
-      -- Pattern: /package/NAME/reverse/verbose">view</a>)</td><td>DIRECT_COUNT
-      rows = extractReverseDepsRows html
-  in Map.fromList rows
+  let rows = drop 1 (Text.splitOn "<tr class=\"" html)
+  in Map.fromList (mapMaybe parseReverseDepRow rows)
 
-extractReverseDepsRows :: Text -> [(Text, Int)]
-extractReverseDepsRows html =
-  let chunks = drop 1 (Text.splitOn "/package/" html)
-  in mapMaybe parseReverseDepChunk chunks
-
-parseReverseDepChunk :: Text -> Maybe (Text, Int)
-parseReverseDepChunk chunk =
-  -- The chunk starts with "PKG/reverse/verbose">view</a>)</td><td>DIRECT (..."
-  -- Or it starts with "PKG">PKG</a></td><td>TOTAL...</td><td>DIRECT..."
-  case Text.breakOn "/reverse\">" chunk of
-    (_, rest)
-      | not (Text.null rest) ->
-        -- This is the direct-count link, extract the package name from before it
-        let nameWithSuffix = Text.takeWhile (/= '"') chunk
-            -- nameWithSuffix might be "PKG/reverse/verbose" or just "PKG"
-            pkgName = case Text.breakOn "/" nameWithSuffix of
-              (name, _) -> name
-        in case Text.breakOn ")</td><td>" rest of
-             (_, afterTd)
-               | not (Text.null afterTd) ->
-                 let countArea = Text.drop (Text.length ")</td><td>") afterTd
-                     countText = Text.takeWhile (\c -> c >= '0' && c <= '9') countText'
-                     countText' = Text.strip countArea
-                 in case Text.decimal countText of
-                      Right (n, _) -> Just (pkgName, n)
-                      Left _ -> Nothing
-             _ -> Nothing
-    _ -> Nothing
+parseReverseDepRow :: Text -> Maybe (Text, Int)
+parseReverseDepRow row = do
+  -- Extract package name from: ...><td><a href="/package/PKG">PKG</a></td>...
+  let (_, afterFirstTd) = Text.breakOn "<td><a href=\"/package/" row
+  rest1 <- Text.stripPrefix "<td><a href=\"/package/" afterFirstTd
+  let (_, afterClose) = Text.breakOn "\">" rest1
+  rest2 <- Text.stripPrefix "\">" afterClose
+  let pkgName = Text.takeWhile (/= '<') rest2
+  -- Skip first </td><td> (total count) and find the direct count in the third <td>
+  -- Structure: ...PKG</a></td><td>TOTAL (...)</td><td>DIRECT (...)</td>
+  let (_, afterSecondTd) = Text.breakOn "</td><td>" rest2
+  rest3 <- Text.stripPrefix "</td><td>" afterSecondTd
+  -- rest3 starts with "TOTAL (..."
+  let (_, afterThirdTd) = Text.breakOn "</td><td>" rest3
+  rest4 <- Text.stripPrefix "</td><td>" afterThirdTd
+  -- rest4 starts with "DIRECT (..."
+  let countText = Text.takeWhile (\c -> c >= '0' && c <= '9') rest4
+  case Text.decimal countText of
+    Right (n, _) -> Just (pkgName, n)
+    Left _ -> Nothing
 
 -- | Fetch version info for a single package.
 -- Returns a map from version string to status ("normal" or "deprecated").
