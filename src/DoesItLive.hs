@@ -35,6 +35,7 @@ data Options = Options
   { optOutput       :: FilePath
   , optConcurrency  :: Int
   , optMinScore     :: Int
+  , optMaxScore     :: Int
   , optCheckBuilds  :: Bool
   , optBuildTimeout :: Int
   } deriving stock (Show)
@@ -95,7 +96,8 @@ runScorer opts = do
   -- Phase 3: Score all packages
   logMsg "Scoring packages..."
   let results = map (scorePackage now) packageInfos
-      filtered = filter (\r -> totalScore r >= optMinScore opts) results
+      filtered = filter (\r -> totalScore r >= optMinScore opts
+                              && totalScore r <= optMaxScore opts) results
       sorted = sortBy (comparing (Down . totalScore)) filtered
 
   logMsg ("Done! " <> show (length sorted) <> " packages scored above threshold "
