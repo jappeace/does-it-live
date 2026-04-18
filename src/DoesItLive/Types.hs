@@ -2,6 +2,8 @@ module DoesItLive.Types
   ( PackageInfo(..)
   , ScoreResult(..)
   , ScoreComponents(..)
+  , BuildStatus(..)
+  , renderBuildStatus
   ) where
 
 import Data.Text (Text)
@@ -26,14 +28,27 @@ data ScoreComponents = ScoreComponents
   , versionScore    :: Int
   } deriving stock (Show, Eq, Generic)
 
+-- | Whether a package was build-checked and the result
+data BuildStatus
+  = BuildChecked Bool
+  | BuildNotChecked
+  deriving stock (Show, Eq, Generic)
+
+-- | Render build status for CSV output
+renderBuildStatus :: BuildStatus -> Text
+renderBuildStatus (BuildChecked True)  = "yes"
+renderBuildStatus (BuildChecked False) = "no"
+renderBuildStatus BuildNotChecked      = ""
+
 data ScoreResult = ScoreResult
   { scorePackageName :: Text
   , totalScore       :: Int
   , components       :: ScoreComponents
+  , buildStatus      :: BuildStatus
   } deriving stock (Show, Eq, Generic)
 
 instance ToNamedRecord ScoreResult where
-  toNamedRecord ScoreResult{scorePackageName, totalScore, components} =
+  toNamedRecord ScoreResult{scorePackageName, totalScore, components, buildStatus} =
     namedRecord
       [ "package"       .= scorePackageName
       , "total"         .= totalScore
@@ -42,6 +57,7 @@ instance ToNamedRecord ScoreResult where
       , "not_deprecated" .= deprecatedScore components
       , "reverse_deps"  .= reverseDepsScore components
       , "versions"      .= versionScore components
+      , "builds"        .= renderBuildStatus buildStatus
       ]
 
 instance DefaultOrdered ScoreResult where
@@ -53,4 +69,5 @@ instance DefaultOrdered ScoreResult where
     , "not_deprecated"
     , "reverse_deps"
     , "versions"
+    , "builds"
     ]

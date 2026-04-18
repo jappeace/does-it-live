@@ -67,6 +67,7 @@ library
       DoesItLive.Hackage
       DoesItLive.Stackage
       DoesItLive.Score
+      DoesItLive.Build
   hs-source-dirs:
       src
   build-depends:
@@ -79,6 +80,8 @@ library
     , containers
     , time
     , async
+    , process
+    , directory
 
 executable exe
   import: common-options
