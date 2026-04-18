@@ -8,7 +8,7 @@ module DoesItLive.Score
   ) where
 
 import Data.Time (UTCTime, NominalDiffTime, diffUTCTime)
-import DoesItLive.Types (PackageInfo(..), ScoreResult(..), ScoreComponents(..))
+import DoesItLive.Types (PackageInfo(..), ScoreResult(..), ScoreComponents(..), BuildStatus(..))
 
 -- | Score a package on a 0-100 scale based on maintenance signals
 scorePackage :: UTCTime -> PackageInfo -> ScoreResult
@@ -29,6 +29,7 @@ scorePackage now info =
       { scorePackageName = packageName info
       , totalScore       = total
       , components       = comps
+      , buildStatus      = BuildNotChecked
       }
 
 -- | Upload recency: max 30 points

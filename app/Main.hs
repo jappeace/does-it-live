@@ -5,15 +5,18 @@ import Data.Csv (encodeDefaultOrderedByName)
 import Options.Applicative
   ( Parser, execParser, info, helper, fullDesc, progDesc, header
   , strOption, option, auto, long, short, metavar, value, showDefault, help
+  , switch
   )
 
 import DoesItLive (runScorer, Options(..))
 import DoesItLive.Types ()
 
 data CliOptions = CliOptions
-  { cliOutput      :: FilePath
-  , cliConcurrency :: Int
-  , cliMinScore    :: Int
+  { cliOutput       :: FilePath
+  , cliConcurrency  :: Int
+  , cliMinScore     :: Int
+  , cliCheckBuilds  :: Bool
+  , cliBuildTimeout :: Int
   }
 
 cliOptionsParser :: Parser CliOptions
@@ -42,6 +45,17 @@ cliOptionsParser = CliOptions
      <> showDefault
      <> help "Only output packages scoring at or above this threshold"
       )
+  <*> switch
+      ( long "check-builds"
+     <> help "Attempt to build each package using Stackage LTS constraints"
+      )
+  <*> option auto
+      ( long "build-timeout"
+     <> metavar "SECONDS"
+     <> value 600
+     <> showDefault
+     <> help "Timeout in seconds for each package build"
+      )
 
 main :: IO ()
 main = do
@@ -52,9 +66,11 @@ main = do
     )
 
   let opts = Options
-        { optOutput      = cliOutput cli
-        , optConcurrency = cliConcurrency cli
-        , optMinScore    = cliMinScore cli
+        { optOutput       = cliOutput cli
+        , optConcurrency  = cliConcurrency cli
+        , optMinScore     = cliMinScore cli
+        , optCheckBuilds  = cliCheckBuilds cli
+        , optBuildTimeout = cliBuildTimeout cli
         }
 
   results <- runScorer opts

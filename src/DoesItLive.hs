@@ -13,22 +13,30 @@ import Data.Maybe (fromMaybe)
 import Data.Ord (Down(..), comparing)
 import Data.Set qualified as Set
 import Data.Text (Text)
+import Data.Text qualified as Text
 import Data.Time (UTCTime, getCurrentTime)
 import Network.HTTP.Client (Manager)
 import Network.HTTP.Client.TLS (newTlsManager)
 import System.IO (hPutStrLn, hFlush, stderr)
+import System.Directory (createDirectoryIfMissing, getTemporaryDirectory)
+import System.Process (readProcessWithExitCode)
 
+import DoesItLive.Build (BuildResult(..), attemptBuild)
 import DoesItLive.Hackage
   ( fetchPackageNames, fetchDeprecated, fetchReverseDeps
   , fetchPackageVersions, fetchUploadTime )
 import DoesItLive.Score (scorePackage)
-import DoesItLive.Stackage (fetchStackagePackages)
-import DoesItLive.Types (PackageInfo(..), ScoreResult(..))
+import DoesItLive.Stackage
+  ( fetchStackagePackages, fetchStackageLtsConfig
+  , parseStackageVersions, formatProjectConstraints )
+import DoesItLive.Types (PackageInfo(..), ScoreResult(..), BuildStatus(..))
 
 data Options = Options
-  { optOutput      :: FilePath
-  , optConcurrency :: Int
-  , optMinScore    :: Int
+  { optOutput       :: FilePath
+  , optConcurrency  :: Int
+  , optMinScore     :: Int
+  , optCheckBuilds  :: Bool
+  , optBuildTimeout :: Int
   } deriving stock (Show)
 
 -- | Run the full scoring pipeline, returning scored results sorted by score descending
@@ -93,7 +101,46 @@ runScorer opts = do
   logMsg ("Done! " <> show (length sorted) <> " packages scored above threshold "
          <> show (optMinScore opts))
 
-  pure sorted
+  -- Phase 4: Optional build checking
+  if optCheckBuilds opts
+    then do
+      logMsg "Phase 4: Checking builds against Stackage LTS..."
+      logMsg "Fetching Stackage LTS constraints..."
+      ltsConfig <- fetchStackageLtsConfig manager
+      let versionMap = parseStackageVersions ltsConfig
+          projectContent = formatProjectConstraints ltsConfig
+
+      logMsg ("  LTS has " <> show (Map.size versionMap) <> " packages")
+
+      logMsg "Running cabal update..."
+      _ <- readProcessWithExitCode "cabal" ["update"] ""
+
+      tmpDir <- getTemporaryDirectory
+      let buildDir = tmpDir <> "/does-it-live-builds"
+      createDirectoryIfMissing True buildDir
+
+      let totalToBuild = length sorted
+      buildResults <- mapM (\(idx, result) -> do
+        let name = scorePackageName result
+        case Map.lookup name versionMap of
+          Nothing -> do
+            logMsg ("  [" <> show idx <> "/" <> show totalToBuild
+                   <> "] " <> Text.unpack name <> ": skipped (not in LTS)")
+            pure result { buildStatus = BuildNotChecked }
+          Just version -> do
+            logMsg ("  [" <> show idx <> "/" <> show totalToBuild
+                   <> "] " <> Text.unpack name <> "-" <> Text.unpack version <> ": building...")
+            buildResult <- attemptBuild buildDir projectContent name version (optBuildTimeout opts)
+            let status = case buildResult of
+                  BuildSuccess   -> BuildChecked True
+                  BuildFailure _ -> BuildChecked False
+                  BuildTimeout   -> BuildChecked False
+                  BuildSkipped   -> BuildNotChecked
+            logMsg ("      -> " <> showBuildResult buildResult)
+            pure result { buildStatus = status }
+        ) (zip [(1 :: Int)..] sorted)
+      pure buildResults
+    else pure sorted
 
 -- | Fetch versions with error handling
 fetchVersionsSafe :: Manager -> Text -> IO (Map.Map Text Text)
@@ -143,3 +190,9 @@ logMsg :: String -> IO ()
 logMsg msg = do
   hPutStrLn stderr msg
   hFlush stderr
+
+showBuildResult :: BuildResult -> String
+showBuildResult BuildSuccess     = "OK"
+showBuildResult (BuildFailure _) = "FAILED"
+showBuildResult BuildTimeout     = "TIMEOUT"
+showBuildResult BuildSkipped     = "SKIPPED"

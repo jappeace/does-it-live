@@ -12,10 +12,10 @@ import Data.Time
 import DoesItLive.Score
   ( scoreRecency, scoreStackage, scoreDeprecated
   , scoreReverseDeps, scoreVersionCount, scorePackage )
-import DoesItLive.Stackage (parseStackageConfig)
+import DoesItLive.Stackage (parseStackageConfig, parseStackageVersions, formatProjectConstraints)
 import DoesItLive.Hackage (parseUploadTimeHtml, parseReverseDepsHtml)
 import Data.Map.Strict qualified as Map
-import DoesItLive.Types (PackageInfo(..), ScoreResult(..))
+import DoesItLive.Types (PackageInfo(..), ScoreResult(..), BuildStatus(..))
 
 main :: IO ()
 main = defaultMain tests
@@ -29,6 +29,8 @@ tests = testGroup "does-it-live"
   , versionCountTests
   , fullScoreTests
   , stackageParserTests
+  , stackageVersionParserTests
+  , projectConstraintsTests
   , reverseDepsParserTests
   , uploadTimeParserTests
   ]
@@ -119,6 +121,7 @@ fullScoreTests = testGroup "Full package scoring"
       in do
         totalScore result @?= 100
         scorePackageName result @?= "aeson"
+        buildStatus result @?= BuildNotChecked
   , testCase "abandoned package scores low" $
       let info = PackageInfo
             { packageName     = "old-forgotten-pkg"
@@ -129,7 +132,9 @@ fullScoreTests = testGroup "Full package scoring"
             , inStackage      = False
             }
           result = scorePackage refTime info
-      in totalScore result @?= 2
+      in do
+        totalScore result @?= 2
+        buildStatus result @?= BuildNotChecked
   ]
 
 stackageParserTests :: TestTree
@@ -158,6 +163,57 @@ stackageParserTests = testGroup "Stackage cabal.config parser"
       in do
         Set.member "foo" result @?= True
         Set.size result @?= 1
+  ]
+
+stackageVersionParserTests :: TestTree
+stackageVersionParserTests = testGroup "Stackage version parser"
+  [ testCase "extracts name-version pairs" $
+      let input = Text.unlines
+            [ "constraints: aeson ==2.1.2.1,"
+            , "             async ==2.2.5,"
+            , "             base ==4.19.1.0,"
+            , "             text ==2.1.1"
+            ]
+          result = parseStackageVersions input
+      in do
+        Map.lookup "aeson" result @?= Just "2.1.2.1"
+        Map.lookup "async" result @?= Just "2.2.5"
+        Map.lookup "base" result @?= Just "4.19.1.0"
+        Map.lookup "text" result @?= Just "2.1.1"
+        Map.size result @?= 4
+  , testCase "ignores comments and with-compiler" $
+      let input = Text.unlines
+            [ "-- Stackage snapshot"
+            , "with-compiler: ghc-9.10.3"
+            , "constraints: foo ==1.0,"
+            , "             bar ==2.0"
+            ]
+          result = parseStackageVersions input
+      in do
+        Map.lookup "foo" result @?= Just "1.0"
+        Map.lookup "bar" result @?= Just "2.0"
+        Map.size result @?= 2
+  ]
+
+projectConstraintsTests :: TestTree
+projectConstraintsTests = testGroup "Project constraints formatter"
+  [ testCase "prepends packages line and strips comments" $
+      let input = Text.unlines
+            [ "-- Auto-generated"
+            , "with-compiler: ghc-9.10.3"
+            , "constraints: aeson ==2.1.2.1,"
+            , "             text ==2.1.1"
+            ]
+          result = formatProjectConstraints input
+      in do
+        -- Should start with "packages: ."
+        Text.isPrefixOf "packages: ." result @?= True
+        -- Should contain constraints
+        Text.isInfixOf "constraints:" result @?= True
+        Text.isInfixOf "aeson ==2.1.2.1" result @?= True
+        -- Should not contain comments or with-compiler
+        Text.isInfixOf "--" result @?= False
+        Text.isInfixOf "with-compiler:" result @?= False
   ]
 
 reverseDepsParserTests :: TestTree
