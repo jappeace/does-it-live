@@ -1,9 +1,9 @@
 cabal-version:      3.0
 
-name:           template
+name:           does-it-live
 version:        1.0.0
-homepage:       https://github.com/jappeace/template#readme
-bug-reports:    https://github.com/jappeace/template/issues
+homepage:       https://github.com/jappeace/does-it-live#readme
+bug-reports:    https://github.com/jappeace/does-it-live/issues
 author:         Jappie Klooster
 maintainer:     hi@jappie.me
 copyright:      2025 Jappie Klooster
@@ -18,10 +18,10 @@ extra-doc-files:
 
 source-repository head
   type: git
-  location: https://github.com/jappeace/template
+  location: https://github.com/jappeace/does-it-live
 
 common common-options
-  default-extensions: 
+  default-extensions:
       EmptyCase
       FlexibleContexts
       FlexibleInstances
@@ -43,6 +43,7 @@ common common-options
       TypeApplications
       NumericUnderscores
       ImportQualifiedPost
+      ScopedTypeVariables
 
   ghc-options:
     -O2 -Wall -Werror -Wincomplete-uni-patterns
@@ -61,11 +62,23 @@ common common-options
 library
   import: common-options
   exposed-modules:
-      Template
-  other-modules:
-      Paths_template
+      DoesItLive
+      DoesItLive.Types
+      DoesItLive.Hackage
+      DoesItLive.Stackage
+      DoesItLive.Score
   hs-source-dirs:
       src
+  build-depends:
+      http-client
+    , http-client-tls
+    , aeson
+    , cassava
+    , bytestring
+    , text
+    , containers
+    , time
+    , async
 
 executable exe
   import: common-options
@@ -73,7 +86,11 @@ executable exe
   hs-source-dirs:
       app
   build-depends:
-      template
+      does-it-live
+    , optparse-applicative
+    , cassava
+    , bytestring
+    , text
   ghc-options: -Wno-unused-packages
 
 test-suite unit
@@ -81,12 +98,13 @@ test-suite unit
   type: exitcode-stdio-1.0
   main-is: Test.hs
   ghc-options: -Wno-unused-packages
-  other-modules:
-      Paths_template
   hs-source-dirs:
       test
   build-depends:
-      tasty,
-      tasty-hunit,
-      tasty-quickcheck,
-      template
+      tasty
+    , tasty-hunit
+    , tasty-quickcheck
+    , does-it-live
+    , containers
+    , time
+    , text
