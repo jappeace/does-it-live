@@ -1,0 +1,145 @@
+module DoesItLive
+  ( runScorer
+  , Options(..)
+  ) where
+
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.Async (mapConcurrently)
+import Control.Exception (try, SomeException)
+import Data.IORef (newIORef, atomicModifyIORef')
+import Data.List (sortBy)
+import Data.Map.Strict qualified as Map
+import Data.Maybe (fromMaybe)
+import Data.Ord (Down(..), comparing)
+import Data.Set qualified as Set
+import Data.Text (Text)
+import Data.Time (UTCTime, getCurrentTime)
+import Network.HTTP.Client (Manager)
+import Network.HTTP.Client.TLS (newTlsManager)
+import System.IO (hPutStrLn, hFlush, stderr)
+
+import DoesItLive.Hackage
+  ( fetchPackageNames, fetchDeprecated, fetchReverseDeps
+  , fetchPackageVersions, fetchUploadTime )
+import DoesItLive.Score (scorePackage)
+import DoesItLive.Stackage (fetchStackagePackages)
+import DoesItLive.Types (PackageInfo(..), ScoreResult(..))
+
+data Options = Options
+  { optOutput      :: FilePath
+  , optConcurrency :: Int
+  , optMinScore    :: Int
+  } deriving stock (Show)
+
+-- | Run the full scoring pipeline, returning scored results sorted by score descending
+runScorer :: Options -> IO [ScoreResult]
+runScorer opts = do
+  manager <- newTlsManager
+  now <- getCurrentTime
+
+  -- Phase 1: Fetch bulk data concurrently
+  logMsg "Fetching package list..."
+  packageNames <- fetchPackageNames manager
+
+  logMsg ("Found " <> show (length packageNames) <> " packages")
+  logMsg "Fetching bulk data (deprecated, reverse deps, stackage)..."
+
+  deprecatedSet <- fetchDeprecated manager
+  logMsg ("  Deprecated: " <> show (Set.size deprecatedSet) <> " packages")
+
+  reverseDepsMap <- fetchReverseDeps manager
+  logMsg ("  Reverse deps data: " <> show (Map.size reverseDepsMap) <> " packages")
+
+  stackageSet <- fetchStackagePackages manager
+  logMsg ("  Stackage nightly: " <> show (Set.size stackageSet) <> " packages")
+
+  -- Phase 2: Fetch per-package version data with throttling
+  logMsg "Fetching per-package version info..."
+  let totalPackages = length packageNames
+  completedRef <- newIORef (0 :: Int)
+
+  let fetchOnePackage :: Text -> IO PackageInfo
+      fetchOnePackage name = do
+        versions <- fetchVersionsSafe manager name
+        let versionList = Map.keys versions
+            latestVersion = findLatestVersion versionList
+        uploadTime <- case latestVersion of
+          Just ver -> fetchUploadTimeSafe manager name ver
+          Nothing  -> pure Nothing
+
+        completed <- atomicModifyIORef' completedRef (\n -> (n + 1, n + 1))
+        if completed `mod` 500 == 0
+          then logMsg ("  Progress: " <> show completed <> "/" <> show totalPackages)
+          else pure ()
+
+        pure PackageInfo
+          { packageName     = name
+          , versionCount    = Map.size versions
+          , lastUpload      = uploadTime
+          , isDeprecated    = Set.member name deprecatedSet
+          , reverseDepCount = fromMaybe 0 (Map.lookup name reverseDepsMap)
+          , inStackage      = Set.member name stackageSet
+          }
+
+  -- Process in batches to respect rate limiting
+  packageInfos <- batchProcess (optConcurrency opts) fetchOnePackage packageNames
+
+  -- Phase 3: Score all packages
+  logMsg "Scoring packages..."
+  let results = map (scorePackage now) packageInfos
+      filtered = filter (\r -> totalScore r >= optMinScore opts) results
+      sorted = sortBy (comparing (Down . totalScore)) filtered
+
+  logMsg ("Done! " <> show (length sorted) <> " packages scored above threshold "
+         <> show (optMinScore opts))
+
+  pure sorted
+
+-- | Fetch versions with error handling
+fetchVersionsSafe :: Manager -> Text -> IO (Map.Map Text Text)
+fetchVersionsSafe manager name = do
+  result <- try (fetchPackageVersions manager name)
+  case result of
+    Left (_ :: SomeException) -> pure Map.empty
+    Right versions -> pure versions
+
+-- | Fetch upload time with error handling
+fetchUploadTimeSafe :: Manager -> Text -> Text -> IO (Maybe UTCTime)
+fetchUploadTimeSafe manager name version = do
+  result <- try (fetchUploadTime manager name version)
+  case result of
+    Left (_ :: SomeException) -> pure Nothing
+    Right uploadTime -> pure uploadTime
+
+-- | Find the latest version by simple text sorting of version strings.
+-- This isn't perfect but works well enough for most Haskell packages.
+findLatestVersion :: [Text] -> Maybe Text
+findLatestVersion [] = Nothing
+findLatestVersion versions =
+  Just (maximum (map normalizeVersion versions))
+  where
+    normalizeVersion :: Text -> Text
+    normalizeVersion = id
+
+-- | Process items in batches with concurrency limit and rate limiting
+batchProcess :: Int -> (a -> IO b) -> [a] -> IO [b]
+batchProcess batchSize action items = do
+  let batches = chunksOf batchSize items
+  concat <$> mapM processBatch batches
+  where
+    processBatch batch = do
+      results <- mapConcurrently action batch
+      -- Small delay between batches to be polite to Hackage
+      threadDelay 50_000  -- 50ms between batches
+      pure results
+
+chunksOf :: Int -> [a] -> [[a]]
+chunksOf _ [] = []
+chunksOf n xs =
+  let (chunk, rest) = splitAt n xs
+  in chunk : chunksOf n rest
+
+logMsg :: String -> IO ()
+logMsg msg = do
+  hPutStrLn stderr msg
+  hFlush stderr
