@@ -75,7 +75,7 @@ buildWithFallback packageDir = do
     ExitSuccess -> do
       -- Constraints solved, now actually build
       (buildExit, _, buildStderr) <- readProcess $
-        setWorkingDir packageDir $ proc "cabal" ["build"]
+        setWorkingDir packageDir $ proc "cabal" ["build", "--ghc-options=-j1"]
       let snippet = lastLines 15 (decodeOutput buildStderr)
       pure (BuildOutcome
         { constraintsSolved = True
@@ -98,7 +98,7 @@ buildWithFallback packageDir = do
         ExitSuccess -> do
           -- Jailbroken solving works, try building
           (buildExit, _, buildStderr) <- readProcess $
-            setWorkingDir packageDir $ proc "cabal" ["build", "--allow-newer"]
+            setWorkingDir packageDir $ proc "cabal" ["build", "--allow-newer", "--ghc-options=-j1"]
           let snippet = lastLines 15 (decodeOutput buildStderr)
           pure (BuildOutcome
             { constraintsSolved = False
