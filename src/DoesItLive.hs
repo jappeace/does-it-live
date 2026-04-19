@@ -17,6 +17,8 @@ import Data.Text qualified as Text
 import Data.Time (UTCTime, getCurrentTime)
 import Network.HTTP.Client (Manager)
 import Network.HTTP.Client.TLS (newTlsManager)
+import Data.ByteString.Lazy qualified as LBS
+import Data.Csv (encodeDefaultOrderedByName, encodeDefaultOrderedByNameWith, defaultEncodeOptions, encUseCrLf, encIncludeHeader)
 import System.IO (hPutStrLn, hFlush, stderr)
 import System.Directory (createDirectoryIfMissing, getTemporaryDirectory)
 import System.Process.Typed (proc, readProcess_)
@@ -122,6 +124,10 @@ runScorer opts = do
       let buildDir = tmpDir <> "/does-it-live-builds"
       createDirectoryIfMissing True buildDir
 
+      -- Write CSV header up front
+      let csvHeader = encodeDefaultOrderedByName ([] :: [ScoreResult])
+      LBS.writeFile (optOutput opts) csvHeader
+
       let totalToBuild = length sorted
       buildResults <- mapM (\(idx, result) -> do
         let name = scorePackageName result
@@ -133,21 +139,31 @@ runScorer opts = do
               Nothing  -> " (latest)"
         logMsg ("  [" <> show idx <> "/" <> show totalToBuild
                <> "] " <> label <> ": building...")
-        buildResult <- attemptBuild buildDir projectContent name version (optBuildTimeout opts)
-        let status = case buildResult of
-              BuildAttempted outcome -> BuildChecked outcome
-              BuildTimeout -> BuildChecked BuildOutcome
-                { constraintsSolved = False
-                , buildSucceeded    = False
-                , usedJailbreak     = False
-                }
-              BuildGetFailed _ -> BuildChecked BuildOutcome
-                { constraintsSolved = False
-                , buildSucceeded    = False
-                , usedJailbreak     = False
-                }
+        buildAttempt <- try (attemptBuild buildDir projectContent name version (optBuildTimeout opts))
+        let (buildResult, status) = case buildAttempt of
+              Left (ex :: SomeException) ->
+                let failOutcome = BuildOutcome
+                      { constraintsSolved = False
+                      , buildSucceeded    = False
+                      , usedJailbreak     = False
+                      }
+                in (BuildGetFailed (Text.pack (show ex)), BuildChecked failOutcome)
+              Right br -> case br of
+                BuildAttempted outcome -> (br, BuildChecked outcome)
+                BuildTimeout -> (br, BuildChecked BuildOutcome
+                  { constraintsSolved = False
+                  , buildSucceeded    = False
+                  , usedJailbreak     = False
+                  })
+                BuildGetFailed _ -> (br, BuildChecked BuildOutcome
+                  { constraintsSolved = False
+                  , buildSucceeded    = False
+                  , usedJailbreak     = False
+                  })
+        let updated = result { buildStatus = status }
+        appendCsvRow (optOutput opts) updated
         logMsg ("      -> " <> showBuildResult buildResult)
-        pure result { buildStatus = status }
+        pure updated
         ) (zip [(1 :: Int)..] sorted)
       pure buildResults
     else pure sorted
@@ -195,6 +211,13 @@ chunksOf _ [] = []
 chunksOf n xs =
   let (chunk, rest) = splitAt n xs
   in chunk : chunksOf n rest
+
+-- | Append a single ScoreResult as a CSV row (no header) to a file
+appendCsvRow :: FilePath -> ScoreResult -> IO ()
+appendCsvRow path result =
+  let rowOpts = defaultEncodeOptions { encUseCrLf = False, encIncludeHeader = False }
+      row = encodeDefaultOrderedByNameWith rowOpts [result]
+  in LBS.appendFile path row
 
 logMsg :: String -> IO ()
 logMsg msg = do

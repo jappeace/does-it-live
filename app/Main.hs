@@ -83,6 +83,11 @@ main = do
         }
 
   results <- runScorer opts
-  let csvData = encodeDefaultOrderedByName results
-  LBS.writeFile (optOutput opts) csvData
-  putStrLn ("Wrote " <> show (length results) <> " packages to " <> optOutput opts)
+  if optCheckBuilds opts
+    then
+      -- CSV was written incrementally during build phase
+      putStrLn ("Wrote " <> show (length results) <> " packages to " <> optOutput opts)
+    else do
+      let csvData = encodeDefaultOrderedByName results
+      LBS.writeFile (optOutput opts) csvData
+      putStrLn ("Wrote " <> show (length results) <> " packages to " <> optOutput opts)

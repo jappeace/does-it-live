@@ -1,89 +1,89 @@
-[![https://jappieklooster.nl](https://img.shields.io/badge/blog-jappieklooster.nl-lightgrey)](https://jappieklooster.nl/tag/haskell.html)
-[![Github actions build status](https://img.shields.io/github/actions/workflow/status/jappeace/haskell-template-project/nix.yaml?branch=master)](https://github.com/jappeace/haskell-template-project/actions)
-[![Jappiejappie](https://img.shields.io/badge/discord-jappiejappie-black?logo=discord)](https://discord.gg/Hp4agqy)
-[![Hackage version](https://img.shields.io/hackage/v/template.svg?label=Hackage)](https://hackage.haskell.org/package/template) 
+[![Github actions build status](https://img.shields.io/github/actions/workflow/status/jappeace/does-it-live/nix.yaml?branch=master)](https://github.com/jappeace/does-it-live/actions)
 
-> The eye that looks ahead to the safe course is closed forever.
+> "The reports of my death are greatly exaggerated." -- Every Hackage package with a 0.1.0.0 release from 2014
 
-Haskell project template.
+# does-it-live
 
-Set up cabal within a nix shell.
-If you like nix this is a good way of doing haskell development.
+A maintenance health scorer for Hackage packages. Scans all ~19,000 packages
+and rates each on a 0-100 scale based on signals like upload recency, Stackage
+inclusion, reverse dependency count, version history, and deprecation status.
 
-similar to: https://github.com/monadfix/nix-cabal
-except this has a makefile and ghcid.
-We also make aggressive use of [pinning](https://wiki.nixos.org/wiki/FAQ/Pinning_Nixpkgs)
-ensuring project builds for ever (theoretically).
+Optionally attempts to actually build each package against Stackage LTS
+constraints, recording whether it compiles, needs `--allow-newer`, or is
+completely broken.
 
-Comes with:
-+ [GHCID](https://jappieklooster.nl/ghcid-for-multi-package-projects.html)
-+ a nix shell, meaning somewhat platform independence.
-  + which is pinned by default
-+ A couple of handy make commands.
-+ Starting haskell files, assuming we put practically all code in library
-+ Working test suite.
-+ functioining CI (pick your favorite or keep both)
-  + for various platforms with cabal
+## Scoring
+
+| Signal | Max points |
+|---|---|
+| Upload recency | 30 |
+| Stackage nightly inclusion | 25 |
+| Reverse dependency count | 20 |
+| Version count | 15 |
+| Not deprecated | 10 |
 
 ## Usage
 
-### Modifying for your project
-Assuming the name of your new project is `new-project`.
-
-```
-git clone git@github.com:jappeace/haskell-template-project.git new-project
-cd new-project
-```
-
-+ [ ] Edit template.cabal,
-    + [ ] find and replace template with `new-project`
-    + [ ] Update copyright
-    + [ ] Update github
-+ [ ] rename template.cabal to new-project.cabal
-+ [ ] Edit Changelog.md
-  + [ ] replace template with `new-project`
-  + [ ] Also describe your version 1.0.0 release.
-+ [x] Edit default.nix and shell.nix, replace template with `new-project`.
-+ [ ] Edit copyright in LICENSE
-+ [ ] For automatic bound bumping: In “Settings” → “Actions” → “General” → “Workflow permissions” tick “Allow GitHub Actions to create and approve pull requests”
-
-#### Reconfigure remotes
-```
-git remote add template git@github.com:jappeace/haskell-template-project.git
-git remote set-url origin git@github.com:YOUR-ORG-OR-USER-NAME/new-project.git
-```
-
-We can get template updates like this if we want to by doing `git pull template`.
-There will be a large amount of conflicts, but the merge commit should solve them permanently.
-
-#### Readme
-
-+ [ ] Select desired badges. 
-  + [ ] Point build badges to right project
-+ [ ] Give short project description.
-+ [ ] Add new quote suited for the project.
-  For example for [fakedata-quickcheck](https://github.com/fakedata-haskell/fakedata-quickcheck#readme)
-  I used Kant because
-  he dealt with the question "what is truth" a lot.
-+ [ ] Truncate this checklist
-+ [ ] Truncate motivation for using  this template
-
-### Tools
-Enter the nix shell.
 ```
 nix-shell
-```
-You can checkout the makefile to see what's available:
-```
-cat makefile
+cabal run does-it-live -- --help
 ```
 
-### Running
 ```
-make run
+does-it-live - Hackage package maintenance scorer
+
+Usage: does-it-live [-o|--output FILE] [-c|--concurrency N]
+                    [-m|--min-score N] [--max-score N]
+                    [--check-builds] [--build-timeout SECONDS]
+
+Options:
+  -o,--output FILE         Output CSV file path (default: "output.csv")
+  -c,--concurrency N       Maximum concurrent Hackage requests (default: 20)
+  -m,--min-score N         Only output packages scoring at or above this threshold (default: 0)
+  --max-score N            Only output packages scoring at or below this threshold (default: 100)
+  --check-builds           Attempt to build each package using Stackage LTS constraints
+  --build-timeout SECONDS  Timeout in seconds for each package build (default: 600)
 ```
 
-### Fast filewatch which runs tests
+### Examples
+
+Score all packages, output to CSV:
 ```
-make ghcid
+cabal run does-it-live
+```
+
+Only well-maintained packages, with build verification:
+```
+cabal run does-it-live -- --min-score 90 --check-builds
+```
+
+Low-scoring packages to see what's truly dead:
+```
+cabal run does-it-live -- --min-score 5 --max-score 10 --check-builds --build-timeout 120
+```
+
+### Build checking
+
+When `--check-builds` is enabled, each package is:
+
+1. Unpacked via `cabal get`
+2. Given a `cabal.project` with Stackage LTS constraints
+3. Tested with `cabal build --dry-run` to check constraint solving
+4. If solving fails, retried with `--allow-newer` (jailbreak)
+5. If solving succeeds, compiled with `cabal build`
+
+The CSV output includes three extra columns:
+
+- `can_solve` -- whether dependency constraints could be solved
+- `builds` -- whether compilation succeeded
+- `jailbroken` -- whether `--allow-newer` was needed
+
+Results are written incrementally, so partial data survives crashes.
+
+## Development
+
+```
+nix-shell
+cabal build   # typecheck
+cabal test    # run tests
 ```
