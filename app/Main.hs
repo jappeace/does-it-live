@@ -55,7 +55,7 @@ cliOptionsParser = CliOptions
       )
   <*> switch
       ( long "check-builds"
-     <> help "Attempt to build each package using Stackage LTS constraints"
+     <> help "Attempt to build each package using Stackage LTS constraints, falling back to --allow-newer if solving fails"
       )
   <*> option auto
       ( long "build-timeout"
