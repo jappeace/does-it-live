@@ -41,7 +41,8 @@ Options:
   -c,--concurrency N       Maximum concurrent Hackage requests (default: 20)
   -m,--min-score N         Only output packages scoring at or above this threshold (default: 0)
   --max-score N            Only output packages scoring at or below this threshold (default: 100)
-  --check-builds           Attempt to build each package using Stackage LTS constraints
+  --check-builds           Attempt to build each package using Stackage LTS
+                           constraints, falling back to --allow-newer if solving fails
   --build-timeout SECONDS  Timeout in seconds for each package build (default: 600)
 ```
 
