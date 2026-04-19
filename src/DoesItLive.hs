@@ -18,7 +18,7 @@ import Data.Time (UTCTime, getCurrentTime)
 import Network.HTTP.Client (Manager)
 import Network.HTTP.Client.TLS (newTlsManager)
 import Data.ByteString.Lazy qualified as LBS
-import Data.Csv (encodeDefaultOrderedByName, encodeDefaultOrderedByNameWith, defaultEncodeOptions, encUseCrLf)
+import Data.Csv (encodeDefaultOrderedByName, encodeDefaultOrderedByNameWith, defaultEncodeOptions, encUseCrLf, encIncludeHeader)
 import System.IO (hPutStrLn, hFlush, stderr)
 import System.Directory (createDirectoryIfMissing, getTemporaryDirectory)
 import System.Process.Typed (proc, readProcess_)
@@ -215,8 +215,8 @@ chunksOf n xs =
 -- | Append a single ScoreResult as a CSV row (no header) to a file
 appendCsvRow :: FilePath -> ScoreResult -> IO ()
 appendCsvRow path result =
-  let noHeaderOpts = defaultEncodeOptions { encUseCrLf = False }
-      row = encodeDefaultOrderedByNameWith noHeaderOpts [result]
+  let rowOpts = defaultEncodeOptions { encUseCrLf = False, encIncludeHeader = False }
+      row = encodeDefaultOrderedByNameWith rowOpts [result]
   in LBS.appendFile path row
 
 logMsg :: String -> IO ()
