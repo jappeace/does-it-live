@@ -149,7 +149,7 @@ runScorer opts = do
                       }
                 in (BuildGetFailed (Text.pack (show ex)), BuildChecked failOutcome)
               Right br -> case br of
-                BuildAttempted outcome -> (br, BuildChecked outcome)
+                BuildAttempted outcome _ -> (br, BuildChecked outcome)
                 BuildTimeout -> (br, BuildChecked BuildOutcome
                   { constraintsSolved = False
                   , buildSucceeded    = False
@@ -225,11 +225,17 @@ logMsg msg = do
   hFlush stderr
 
 showBuildResult :: BuildResult -> String
-showBuildResult (BuildAttempted outcome)
+showBuildResult (BuildAttempted outcome snippet)
   | buildSucceeded outcome && usedJailbreak outcome = "OK (jailbroken)"
   | buildSucceeded outcome                          = "OK"
-  | usedJailbreak outcome                           = "FAILED (jailbroken)"
-  | constraintsSolved outcome                       = "FAILED"
-  | otherwise                                       = "CAN'T SOLVE"
-showBuildResult BuildTimeout       = "TIMEOUT"
-showBuildResult (BuildGetFailed _) = "GET FAILED"
+  | otherwise =
+      let tag | usedJailbreak outcome     = "FAILED (jailbroken)"
+              | constraintsSolved outcome = "FAILED"
+              | otherwise                 = "CAN'T SOLVE"
+          errorDetail = Text.unpack (Text.strip snippet)
+      in tag <> if null errorDetail then "" else "\n" <> indentLines errorDetail
+showBuildResult BuildTimeout         = "TIMEOUT"
+showBuildResult (BuildGetFailed msg) = "GET FAILED: " <> Text.unpack msg
+
+indentLines :: String -> String
+indentLines = unlines . map ("        " <>) . lines

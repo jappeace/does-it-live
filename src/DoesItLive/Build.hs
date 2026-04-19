@@ -18,7 +18,7 @@ import DoesItLive.Types (BuildOutcome(..))
 
 -- | Result of attempting to build a package
 data BuildResult
-  = BuildAttempted BuildOutcome
+  = BuildAttempted BuildOutcome Text  -- ^ outcome + stderr snippet
   | BuildTimeout
   | BuildGetFailed Text
   deriving stock (Show, Eq)
@@ -62,45 +62,49 @@ attemptBuild workDir projectContent packageName maybeVersion timeoutSeconds = do
         result <- timeout (timeoutSeconds * 1_000_000) $ buildWithFallback packageDir
         case result of
           Nothing -> pure BuildTimeout
-          Just outcome -> pure (BuildAttempted outcome)
+          Just (outcome, snippet) -> pure (BuildAttempted outcome snippet)
 
--- | Try building: first normal, then with --allow-newer if solving fails
-buildWithFallback :: FilePath -> IO BuildOutcome
+-- | Try building: first normal, then with --allow-newer if solving fails.
+-- Returns the outcome plus a stderr snippet for diagnostics.
+buildWithFallback :: FilePath -> IO (BuildOutcome, Text)
 buildWithFallback packageDir = do
   -- Step 1: Try dry-run to check constraint solving
-  (dryExit, _, _) <- readProcess $
+  (dryExit, _, _dryStderr) <- readProcess $
     setWorkingDir packageDir $ proc "cabal" ["build", "--dry-run"]
   case dryExit of
     ExitSuccess -> do
       -- Constraints solved, now actually build
-      (buildExit, _, _) <- readProcess $
-        setWorkingDir packageDir $ proc "cabal" ["build"]
-      pure BuildOutcome
+      (buildExit, _, buildStderr) <- readProcess $
+        setWorkingDir packageDir $ proc "cabal" ["build", "--ghc-options=-j1"]
+      let snippet = lastLines 15 (decodeOutput buildStderr)
+      pure (BuildOutcome
         { constraintsSolved = True
         , buildSucceeded    = buildExit == ExitSuccess
         , usedJailbreak     = False
-        }
+        }, snippet)
     ExitFailure _ -> do
       -- Constraints failed, try with --allow-newer
-      (jailDryExit, _, _) <- readProcess $
+      (jailDryExit, _, jailDryStderr) <- readProcess $
         setWorkingDir packageDir $ proc "cabal" ["build", "--dry-run", "--allow-newer"]
       case jailDryExit of
         ExitFailure _ ->
           -- Can't solve even with --allow-newer
-          pure BuildOutcome
+          let snippet = lastLines 15 (decodeOutput jailDryStderr)
+          in pure (BuildOutcome
             { constraintsSolved = False
             , buildSucceeded    = False
             , usedJailbreak     = False
-            }
+            }, snippet)
         ExitSuccess -> do
           -- Jailbroken solving works, try building
-          (buildExit, _, _) <- readProcess $
-            setWorkingDir packageDir $ proc "cabal" ["build", "--allow-newer"]
-          pure BuildOutcome
+          (buildExit, _, buildStderr) <- readProcess $
+            setWorkingDir packageDir $ proc "cabal" ["build", "--allow-newer", "--ghc-options=-j1"]
+          let snippet = lastLines 15 (decodeOutput buildStderr)
+          pure (BuildOutcome
             { constraintsSolved = False
             , buildSucceeded    = buildExit == ExitSuccess
             , usedJailbreak     = True
-            }
+            }, snippet)
 
 -- | Find the unpacked package directory from cabal get output.
 -- Stdout says "Unpacking to /path/PKG-VERSION/"
@@ -131,3 +135,9 @@ parseUnpackPath output =
 -- | Decode process output from lazy ByteString to Text
 decodeOutput :: LBS.ByteString -> Text
 decodeOutput = Text.decodeUtf8 . LBS.toStrict
+
+-- | Take the last N lines of text, stripping blank lines
+lastLines :: Int -> Text -> Text
+lastLines n = Text.unlines . takeLast n . filter (not . Text.null . Text.strip) . Text.lines
+  where
+    takeLast count xs = drop (max 0 (length xs - count)) xs
