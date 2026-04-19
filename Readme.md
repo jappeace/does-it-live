@@ -80,6 +80,19 @@ The CSV output includes three extra columns:
 
 Results are written incrementally, so partial data survives crashes.
 
+## Docker
+
+Build and run inside a fat Docker image with GHC, cabal, and all native
+C libraries pre-installed. No nix-shell needed on the host.
+
+```
+./scripts/build-docker.sh     # nix-build + docker load (~5 min first time)
+./scripts/run-docker.sh --check-builds --min-score 50
+```
+
+Output lands in `./output/results.csv`. All CLI flags pass through to
+`run-docker.sh`.
+
 ## Development
 
 ```
